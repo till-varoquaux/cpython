@@ -20,6 +20,9 @@ extern PyObject *_Py_make_parameters(PyObject *);
 extern PyObject *_Py_union_args(PyObject *self);
 extern PyObject *_Py_union_from_tuple(PyObject *args);
 
+extern int _Py_typing_is_type_like(PyObject *obj);
+extern PyObject *_Py_typing_type_check(PyObject *arg, const char *msg, int allow_special_forms);
+
 #ifdef __cplusplus
 }
 #endif

@@ -50,8 +50,9 @@ class TypesTests(unittest.TestCase):
                 self.assertIs(getattr(c_types, name), getattr(py_types, name))
 
         all_names = ignored | {
-            'AsyncGeneratorType', 'BuiltinFunctionType', 'BuiltinMethodType',
-            'CapsuleType', 'CellType', 'ClassMethodDescriptorType', 'CodeType',
+            'AnnotatedType', 'AsyncGeneratorType', 'BuiltinFunctionType',
+            'BuiltinMethodType', 'CapsuleType', 'CellType',
+            'ClassMethodDescriptorType', 'CodeType',
             'CoroutineType', 'EllipsisType', 'FrameType', 'FunctionType',
             'FrameLocalsProxyType',
             'GeneratorType', 'GenericAlias', 'GetSetDescriptorType',
@@ -1175,6 +1176,195 @@ class UnionTests(unittest.TestCase):
         ):
             self.assertIsInstance(obj, types.UnionType)
             self.assertEqual(obj.__args__, (int, EqualToForwardRef("str")))
+
+
+class AnnotatedTests(unittest.TestCase):
+
+    def test_matmul_types_operator(self):
+        self.assertEqual(int @"meta", types.AnnotatedType[int, "meta"])
+        self.assertNotEqual(int @"meta", types.AnnotatedType[int, "other"])
+        self.assertEqual(int @"m1" @"m2", types.AnnotatedType[int, "m1", "m2"])
+        self.assertEqual(int @"m1" @"m2" @ 42, types.AnnotatedType[int, "m1", "m2", 42])
+
+        self.assertEqual((int @"m1") @"m2", types.AnnotatedType[int, "m1", "m2"])
+        self.assertEqual(int @"m1" @"m2" @"m3", types.AnnotatedType[int, "m1", "m2", "m3"])
+        self.assertEqual(repr(int @"m1" @"m2" @"m3"), "int @'m1' @'m2' @'m3'")
+
+        x = int @"meta"
+        self.assertEqual(x, int @"meta")
+        self.assertNotEqual(x, {})  # should not raise exception
+        with self.assertRaises(TypeError):
+            x < x
+        with self.assertRaises(TypeError):
+            x <= x
+        y = types.AnnotatedType[int, "meta"]
+        with self.assertRaises(TypeError):
+            x < y
+
+    def test_matmul_type_repr(self):
+        self.assertEqual(repr(int @"meta"), "int @'meta'")
+        self.assertEqual(repr(list[int] @"meta"), "list[int] @'meta'")
+        self.assertEqual(repr((int | float) @ "meta"), "(int | float) @'meta'")
+        self.assertEqual(repr(int | float @ "meta"), "int | float @'meta'")
+
+
+    def test_matmul_types_operator_with_genericalias(self):
+        ga = list[int]
+        at = ga @"meta"
+        self.assertEqual(at, types.AnnotatedType[ga, "meta"])
+        self.assertEqual(at.__args__, (ga, "meta"))
+        self.assertEqual(repr(at), "list[int] @'meta'")
+
+    def test_matmul_types_operator_with_union(self):
+        u = int | float
+        at = u @"meta"
+        self.assertEqual(at, types.AnnotatedType[u, "meta"])
+        self.assertEqual(at.__args__, (u, "meta"))
+        self.assertEqual(repr(at), "(int | float) @'meta'")
+
+        u2 = typing.Union[int, float]
+        at2 = u2 @"meta"
+        self.assertEqual(at2, types.AnnotatedType[u2, "meta"])
+        self.assertEqual(at2.__args__, (u2, "meta"))
+        self.assertEqual(repr(at2), "(int | float) @'meta'")
+
+        at_union = int | float @ "a"
+        self.assertIsInstance(at_union, types.UnionType)
+        self.assertEqual(at_union, int | (float @ "a"))
+        self.assertEqual(repr(at_union), "int | float @'a'")
+
+        u_flat = (int | float) @"m1" @"m2"
+        self.assertEqual(u_flat.__args__, (int | float, "m1", "m2"))
+        self.assertEqual(repr(u_flat), "(int | float) @'m1' @'m2'")
+
+    def test_hash(self):
+        at1 = int @"m1" @"m2"
+        at2 = int @"m1" @"m2"
+        at3 = int @"m2" @"m1"
+        self.assertEqual(hash(at1), hash(at2))
+        self.assertNotEqual(hash(at1), hash(at3))
+
+        at = int @[1, 2]
+        with self.assertRaises(TypeError):
+            hash(at)
+
+    def test_matmul_types_operator_equality(self):
+        at1 = int @"m1" @"m2"
+        at2 = int @"m1" @"m2"
+        at3 = int @"m2" @"m1"
+        at4 = float @ "m1" @"m2"
+
+        self.assertEqual(at1, at2)
+        self.assertNotEqual(at1, at3)
+        self.assertNotEqual(at1, at4)
+        self.assertNotEqual(at1, int)
+        self.assertNotEqual(at1, {})
+
+        self.assertEqual(at1, types.AnnotatedType[int, "m1", "m2"])
+        self.assertEqual(types.AnnotatedType[int, "m1", "m2"], at1)
+
+    def test_annotated_types_args(self):
+        def check(arg, expected):
+            clear_typing_caches()
+            self.assertEqual(arg.__args__, expected)
+
+        check(int @"m1" @"m2", (int, "m1", "m2"))
+        at = int @"m1" @"m2"
+        self.assertEqual(at.__name__, "Annotated")
+        self.assertEqual(at.__qualname__, "Annotated")
+        self.assertEqual(at.__module__, "typing")
+
+    def test_annotated_types_parameter_substitution(self):
+        T = typing.TypeVar("T")
+        at = list[T] @"meta"
+        self.assertEqual(at.__parameters__, (T,))
+
+        at2 = at[int]
+        self.assertEqual(at2, types.AnnotatedType[list[int], "meta"])
+        self.assertEqual(at2.__parameters__, ())
+
+    def test_annotated_types_pickle(self):
+        for orig in (int @"meta", T @"meta", list[T] @"meta"):
+            for proto in range(pickle.HIGHEST_PROTOCOL + 1):
+                with self.subTest(orig=orig, proto=proto):
+                    loaded = pickle.loads(pickle.dumps(orig, proto))
+                    self.assertEqual(loaded, orig)
+
+    def test_annotated_types_copy(self):
+        for orig in (int @"meta", T @"meta", list[T] @"meta"):
+            with self.subTest(orig=orig):
+                for copied in (copy.copy(orig), copy.deepcopy(orig)):
+                    self.assertEqual(copied, orig)
+
+    def test_annotated_types_parameter_substitution_errors(self):
+        T = typing.TypeVar("T")
+        x = list[T] @"meta"
+        with self.assertRaises(TypeError):
+            x[int, str]
+
+    def test_instantiation(self):
+        check_disallow_instantiation(self, types.AnnotatedType)
+        self.assertEqual(int @"meta", types.AnnotatedType[int, "meta"])
+        with self.assertRaises(TypeError):
+            types.AnnotatedType[int]
+
+        for obj in (
+            int @"Forward",
+        ):
+            self.assertIsInstance(obj, types.AnnotatedType)
+            self.assertEqual(obj.__args__, (int, "Forward"))
+
+    def test_isinstance_issubclass(self):
+        at = int @"meta"
+        with self.assertRaisesRegex(TypeError, r"isinstance\(\) argument 2 cannot be an Annotated type"):
+            isinstance(1, at)
+        with self.assertRaisesRegex(TypeError, r"issubclass\(\) argument 2 cannot be an Annotated type"):
+            issubclass(int, at)
+
+        # Union of annotated types
+        at2 = str @"meta2"
+        u = at | at2
+        with self.assertRaisesRegex(TypeError, r"isinstance\(\) argument 2 cannot be an Annotated type"):
+            isinstance(1, u)
+        with self.assertRaisesRegex(TypeError, r"isinstance\(\) argument 2 cannot be an Annotated type"):
+            isinstance("a", u)
+
+    def test_attr_passthrough(self):
+        class C:
+            x = 1
+        at = C @"meta"
+        self.assertEqual(at.x, 1)
+        at.x = 2
+        self.assertEqual(C.x, 2)
+
+        with self.assertRaises(AttributeError):
+            at.y
+
+    def test_dir(self):
+        at = int @"meta"
+        self.assertIn("bit_count", dir(at))
+
+    def test_call(self):
+        at = int @"meta"
+        self.assertEqual(at("5"), 5)
+        self.assertIsInstance(at("5"), int)
+
+    def test_mro_entries(self):
+        at = int @"meta"
+        class D(at):
+            pass
+        self.assertEqual(D.__mro__, (D, int, object))
+
+    def test_negative(self):
+        with self.assertRaises(TypeError):
+            1 @"meta"
+        with self.assertRaisesRegex(TypeError, r"Annotated\[...\] requires at least two arguments"):
+            types.AnnotatedType[int]
+
+    def test_string_origin(self):
+        at = types.AnnotatedType["int", 1]
+        self.assertEqual(at.__origin__, EqualToForwardRef("int", is_class=True))
+        self.assertEqual(at.__args__, (EqualToForwardRef("int", is_class=True), 1))
 
 
 class MappingProxyTests(unittest.TestCase):

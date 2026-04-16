@@ -539,8 +539,8 @@ class ClassTests(unittest.TestCase):
             '__round__', '__set__', '__setitem__', '__trunc__'
         ]
         augment = (
-            'add', 'and', 'floordiv', 'lshift', 'matmul', 'mod', 'mul', 'pow',
-            'rshift', 'sub', 'truediv', 'xor'
+            'add', 'and', 'floordiv', 'lshift', 'mod', 'mul', 'pow', 'rshift',
+            'sub', 'truediv', 'xor'
         )
         not_defined.extend(map("__{}__".format, augment))
         not_defined.extend(map("__r{}__".format, augment))

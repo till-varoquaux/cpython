@@ -5069,9 +5069,9 @@ class TestSignatureObject(unittest.TestCase):
         def func(x: Annotated[int, 'meta'], y: Literal['a', 'b'], z: 'LiteralString'):
             pass
 
-        expected_singleline = "(x: Annotated[int, 'meta'], y: Literal['a', 'b'], z: 'LiteralString')"
+        expected_singleline = "(x: int @'meta', y: Literal['a', 'b'], z: 'LiteralString')"
         expected_multiline = """(
-    x: Annotated[int, 'meta'],
+    x: int @'meta',
     y: Literal['a', 'b'],
     z: 'LiteralString'
 )"""
@@ -5114,7 +5114,7 @@ class TestSignatureObject(unittest.TestCase):
             pass
 
         expected_multiline = """(
-    x: Annotated[int, 'meta'],
+    x: int @'meta',
     /,
     y: Literal['a', 'b'],
     *,

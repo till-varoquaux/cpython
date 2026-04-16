@@ -2,6 +2,7 @@
 /* Generic object operations; and implementation of None */
 
 #include "Python.h"
+#include "pycore_annotatedobject.h" // _PyAnnotated_Matmul
 #include "pycore_brc.h"           // _Py_brc_queue_object()
 #include "pycore_call.h"          // _PyObject_CallNoArgs()
 #include "pycore_ceval.h"         // _Py_EnterRecursiveCallTstate()
@@ -35,6 +36,7 @@
 #include "pycore_typevarobject.h" // _PyTypeAlias_Type
 #include "pycore_stackref.h"      // PyStackRef_FromPyObjectSteal
 #include "pycore_unionobject.h"   // _PyUnion_Type
+#include "pycore_annotatedobject.h" // _PyAnnotated_Type
 
 
 #ifdef Py_LIMITED_API
@@ -2642,6 +2644,7 @@ static PyTypeObject* static_types[_Py_NUM_MANAGED_PREINITIALIZED_TYPES] = {
     &_PyTemplateIter_Type,
     &_PyUnicodeASCIIIter_Type,
     &_PyUnion_Type,
+    &_PyAnnotated_Type,
 #ifdef _Py_TIER2
     &_PyUOpExecutor_Type,
 #else

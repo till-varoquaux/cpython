@@ -279,6 +279,7 @@ PICKLEABLE = [
     *USER_TOP_INSTANCES,
     *USER_EXCEPTIONS,
     # from OTHER_TYPES
+    types.AnnotatedType,
     types.NoneType,
     types.EllipsisType,
     types.NotImplementedType,

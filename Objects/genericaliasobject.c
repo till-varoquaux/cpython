@@ -6,6 +6,7 @@
 #include "pycore_object.h"
 #include "pycore_typevarobject.h" // _Py_typing_type_repr
 #include "pycore_unicodeobject.h" // _PyUnicode_EqualToASCIIString()
+#include "pycore_annotatedobject.h" // _PyAnnotated_Matmul
 #include "pycore_unionobject.h"   // _Py_union_type_or, _PyGenericAlias_Check
 #include "pycore_weakref.h"       // FT_CLEAR_WEAKREFS()
 
@@ -321,8 +322,8 @@ subs_tvars(PyObject *obj, PyObject *params,
     return obj;
 }
 
-static int
-_is_unpacked_typevartuple(PyObject *arg)
+int
+_Py_is_unpacked_typevartuple(PyObject *arg)
 {
     PyObject *tmp;
     if (PyType_Check(arg)) { // TODO: Add test
@@ -330,7 +331,8 @@ _is_unpacked_typevartuple(PyObject *arg)
     }
     int res = PyObject_GetOptionalAttr(arg, &_Py_ID(__typing_is_unpacked_typevartuple__), &tmp);
     if (res > 0) {
-        res = PyObject_IsTrue(tmp);
+        // gh-137706: Check for actual is True to avoid _Stringifier issues
+        res = (tmp == Py_True);
         Py_DECREF(tmp);
     }
     return res;
@@ -505,7 +507,7 @@ _Py_subs_parameters(PyObject *self, PyObject *args, PyObject *parameters, PyObje
             jarg++;
             continue;
         }
-        int unpack = _is_unpacked_typevartuple(arg);
+        int unpack = _Py_is_unpacked_typevartuple(arg);
         if (unpack < 0) {
             Py_DECREF(newargs);
             Py_DECREF(item);
@@ -579,11 +581,8 @@ ga_getitem(PyObject *self, PyObject *item)
 {
     gaobject *alias = (gaobject *)self;
     // Populate __parameters__ if needed.
-    if (alias->parameters == NULL) {
-        alias->parameters = _Py_make_parameters(alias->args);
-        if (alias->parameters == NULL) {
-            return NULL;
-        }
+    if (_Py_typing_init_parameters(self, &alias->parameters, alias->args) < 0) {
+        return NULL;
     }
 
     PyObject *newargs = _Py_subs_parameters(self, alias->args, alias->parameters, item);
@@ -622,17 +621,12 @@ ga_hash(PyObject *self)
     return h0 ^ h1;
 }
 
-static inline PyObject *
-set_orig_class(PyObject *obj, PyObject *self)
+PyObject *
+_Py_typing_set_orig_class(PyObject *obj, PyObject *self)
 {
     if (obj != NULL) {
         if (PyObject_SetAttr(obj, &_Py_ID(__orig_class__), self) < 0) {
-            if (!PyErr_ExceptionMatches(PyExc_AttributeError) &&
-                !PyErr_ExceptionMatches(PyExc_TypeError))
-            {
-                Py_DECREF(obj);
-                return NULL;
-            }
+            // gh-115165: Ignore all errors, not just TypeError
             PyErr_Clear();
         }
     }
@@ -644,7 +638,7 @@ ga_call(PyObject *self, PyObject *args, PyObject *kwds)
 {
     gaobject *alias = (gaobject *)self;
     PyObject *obj = PyObject_Call(alias->origin, args, kwds);
-    return set_orig_class(obj, self);
+    return _Py_typing_set_orig_class(obj, self);
 }
 
 static PyObject *
@@ -653,7 +647,7 @@ ga_vectorcall(PyObject *self, PyObject *const *args,
 {
     gaobject *alias = (gaobject *) self;
     PyObject *obj = PyObject_Vectorcall(alias->origin, args, nargsf, kwnames);
-    return set_orig_class(obj, self);
+    return _Py_typing_set_orig_class(obj, self);
 }
 
 static const char* const attr_exceptions[] = {
@@ -676,10 +670,11 @@ static const char* const attr_blocked[] = {
     NULL,
 };
 
-static PyObject *
-ga_getattro(PyObject *self, PyObject *name)
+PyObject *
+_Py_typing_proxy_getattro(PyObject *self, PyObject *origin, PyObject *name,
+                         const char * const *attr_blocked,
+                         const char * const *attr_exceptions)
 {
-    gaobject *alias = (gaobject *)self;
     if (PyUnicode_Check(name)) {
         // When we check blocked attrs, we don't allow to proxy them to `__origin__`.
         // Otherwise, we can break existing code.
@@ -695,7 +690,7 @@ ga_getattro(PyObject *self, PyObject *name)
         // When we see own attrs, it has a priority over `__origin__`'s attr.
         for (const char * const *p = attr_exceptions; ; p++) {
             if (*p == NULL) {
-                return PyObject_GetAttr(alias->origin, name);
+                return PyObject_GetAttr(origin, name);
             }
             if (_PyUnicode_EqualToASCIIString(name, *p)) {
                 goto generic_getattr;
@@ -705,6 +700,13 @@ ga_getattro(PyObject *self, PyObject *name)
 
 generic_getattr:
     return PyObject_GenericGetAttr(self, name);
+}
+
+static PyObject *
+ga_getattro(PyObject *self, PyObject *name)
+{
+    gaobject *alias = (gaobject *)self;
+    return _Py_typing_proxy_getattro(self, alias->origin, name, attr_blocked, attr_exceptions);
 }
 
 static PyObject *
@@ -785,11 +787,10 @@ ga_reduce(PyObject *self, PyObject *Py_UNUSED(ignored))
                          alias->origin, alias->args);
 }
 
-static PyObject *
-ga_dir(PyObject *self, PyObject *Py_UNUSED(ignored))
+PyObject *
+_Py_typing_proxy_dir(PyObject *origin, const char * const *attr_exceptions)
 {
-    gaobject *alias = (gaobject *)self;
-    PyObject *dir = PyObject_Dir(alias->origin);
+    PyObject *dir = PyObject_Dir(origin);
     if (dir == NULL) {
         return NULL;
     }
@@ -823,6 +824,13 @@ error:
     return NULL;
 }
 
+static PyObject *
+ga_dir(PyObject *self, PyObject *Py_UNUSED(ignored))
+{
+    gaobject *alias = (gaobject *)self;
+    return _Py_typing_proxy_dir(alias->origin, attr_exceptions);
+}
+
 static PyMethodDef ga_methods[] = {
     {"__mro_entries__", ga_mro_entries, METH_O},
     {"__instancecheck__", ga_instancecheck, METH_O},
@@ -843,11 +851,8 @@ static PyObject *
 ga_parameters(PyObject *self, void *unused)
 {
     gaobject *alias = (gaobject *)self;
-    if (alias->parameters == NULL) {
-        alias->parameters = _Py_make_parameters(alias->args);
-        if (alias->parameters == NULL) {
-            return NULL;
-        }
+    if (_Py_typing_init_parameters(self, &alias->parameters, alias->args) < 0) {
+        return NULL;
     }
     return Py_NewRef(alias->parameters);
 }
@@ -921,6 +926,7 @@ ga_new(PyTypeObject *type, PyObject *args, PyObject *kwds)
 }
 
 static PyNumberMethods ga_as_number = {
+        .nb_matrix_multiply = _PyAnnotated_Matmul,  // Add __matmul__ function
         .nb_or = _Py_union_type_or, // Add __or__ function
 };
 

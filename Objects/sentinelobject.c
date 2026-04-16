@@ -9,6 +9,7 @@
 #include "pycore_tuple.h"         // _PyTuple_FromPair
 #include "pycore_typeobject.h"    // _Py_BaseObject_RichCompare()
 #include "pycore_unionobject.h"   // _Py_union_type_or()
+#include "pycore_annotatedobject.h" // _PyAnnotated_Matmul
 
 typedef struct {
     PyObject_HEAD
@@ -192,6 +193,7 @@ static PyMemberDef sentinel_members[] = {
 };
 
 static PyNumberMethods sentinel_as_number = {
+    .nb_matrix_multiply = _PyAnnotated_Matmul,
     .nb_or = _Py_union_type_or,
 };
 

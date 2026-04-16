@@ -1,5 +1,6 @@
 // TypeVar, TypeVarTuple, ParamSpec, and TypeAlias
 #include "Python.h"
+#include "pycore_annotatedobject.h" // _PyAnnotated_Matmul
 #include "pycore_interpframe.h"   // _PyInterpreterFrame
 #include "pycore_object.h"        // _PyObject_GC_TRACK/UNTRACK, PyAnnotateFormat
 #include "pycore_tuple.h"         // _PyTuple_FromPair
@@ -280,6 +281,10 @@ _Py_typing_type_repr(PyUnicodeWriter *writer, PyObject *p)
 
     if (p == (PyObject *)&_PyNone_Type) {
         return PyUnicodeWriter_WriteASCII(writer, "None", 4);
+    }
+
+    if (_PyAnnotated_Check(p)) {
+        goto use_repr;
     }
 
     if ((rc = PyObject_HasAttrWithError(p, &_Py_ID(__origin__))) > 0 &&
@@ -921,6 +926,7 @@ details.\n\
 static PyType_Slot typevar_slots[] = {
     {Py_tp_doc, (void *)typevar_doc},
     {Py_tp_methods, typevar_methods},
+    {Py_nb_matrix_multiply, _PyAnnotated_Matmul},
     {Py_nb_or, make_union},
     {Py_tp_new, typevar_new},
     {Py_tp_dealloc, typevar_dealloc},
@@ -1501,6 +1507,7 @@ static PyType_Slot paramspec_slots[] = {
     {Py_tp_getset, paramspec_getset},
     // Unions of ParamSpecs have no defined meaning, but they were allowed
     // by the Python implementation, so we allow them here too.
+    {Py_nb_matrix_multiply, _PyAnnotated_Matmul},
     {Py_nb_or, make_union},
     {Py_tp_new, paramspec_new},
     {Py_tp_dealloc, paramspec_dealloc},
@@ -1841,6 +1848,7 @@ static PyType_Slot typevartuple_slots[] = {
     {Py_tp_methods, typevartuple_methods},
     {Py_tp_getset, typevartuple_getset},
     {Py_tp_new, typevartuple},
+    {Py_nb_matrix_multiply, _PyAnnotated_Matmul},
     {Py_tp_iter, unpack_iter},
     {Py_tp_repr, typevartuple_repr},
     {Py_tp_dealloc, typevartuple_dealloc},
@@ -2235,6 +2243,7 @@ See PEP 695 for more information.\n\
 ");
 
 static PyNumberMethods typealias_as_number = {
+    .nb_matrix_multiply = _PyAnnotated_Matmul,
     .nb_or = _Py_union_type_or,
 };
 

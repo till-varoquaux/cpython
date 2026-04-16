@@ -4,6 +4,7 @@
 #include "pycore_typevarobject.h"  // _PyTypeAlias_Type, _Py_typing_type_repr
 #include "pycore_unicodeobject.h" // _PyUnicode_EqualToASCIIString
 #include "pycore_unionobject.h"
+#include "pycore_annotatedobject.h"
 #include "pycore_weakref.h"       // FT_CLEAR_WEAKREFS()
 
 
@@ -137,7 +138,6 @@ typedef struct {
 
 static bool unionbuilder_add_tuple(unionbuilder *, PyObject *);
 static PyObject *make_union(unionbuilder *);
-static PyObject *type_check(PyObject *, const char *);
 
 static bool
 unionbuilder_init(unionbuilder *ub, bool is_checked)
@@ -215,7 +215,7 @@ unionbuilder_add_single(unionbuilder *ub, PyObject *arg)
         return unionbuilder_add_tuple(ub, args);
     }
     if (ub->is_checked) {
-        PyObject *type = type_check(arg, "Union[arg, ...]: each arg must be a type.");
+        PyObject *type = _Py_typing_type_check(arg, "Union[arg, ...]: each arg must be a type.", 0);
         if (type == NULL) {
             return false;
         }
@@ -240,24 +240,28 @@ unionbuilder_add_tuple(unionbuilder *ub, PyObject *tuple)
     return true;
 }
 
-static int
-is_unionable(PyObject *obj)
+int
+_Py_typing_is_type_like(PyObject *obj)
 {
     if (obj == Py_None ||
         PyType_Check(obj) ||
         PySentinel_Check(obj) ||
         _PyGenericAlias_Check(obj) ||
         _PyUnion_Check(obj) ||
+        _PyAnnotated_Check(obj) ||
         Py_IS_TYPE(obj, &_PyTypeAlias_Type)) {
         return 1;
     }
-    return 0;
+    PyInterpreterState *interp = _PyInterpreterState_GET();
+    return (Py_IS_TYPE(obj, interp->cached_objects.typevar_type) ||
+            Py_IS_TYPE(obj, interp->cached_objects.paramspec_type) ||
+            Py_IS_TYPE(obj, interp->cached_objects.typevartuple_type));
 }
 
 PyObject *
 _Py_union_type_or(PyObject* self, PyObject* other)
 {
-    if (!is_unionable(self) || !is_unionable(other)) {
+    if (!_Py_typing_is_type_like(self) || !_Py_typing_is_type_like(other)) {
         Py_RETURN_NOTIMPLEMENTED;
     }
 
@@ -322,20 +326,28 @@ static PyMemberDef union_members[] = {
         {0}
 };
 
+int
+_Py_typing_init_parameters(PyObject *obj, PyObject **parameters_ptr, PyObject *args)
+{
+    int result = 0;
+    if (*parameters_ptr == NULL) {
+        Py_BEGIN_CRITICAL_SECTION(obj);
+        if (*parameters_ptr == NULL) {
+            *parameters_ptr = _Py_make_parameters(args);
+            if (*parameters_ptr == NULL) {
+                result = -1;
+            }
+        }
+        Py_END_CRITICAL_SECTION();
+    }
+    return result;
+}
+
 // Populate __parameters__ if needed.
 static int
 union_init_parameters(unionobject *alias)
 {
-    int result = 0;
-    Py_BEGIN_CRITICAL_SECTION(alias);
-    if (alias->parameters == NULL) {
-        alias->parameters = _Py_make_parameters(alias->args);
-        if (alias->parameters == NULL) {
-            result = -1;
-        }
-    }
-    Py_END_CRITICAL_SECTION();
-    return result;
+    return _Py_typing_init_parameters((PyObject *)alias, &alias->parameters, alias->args);
 }
 
 static PyObject *
@@ -410,6 +422,7 @@ union_nb_or(PyObject *a, PyObject *b)
 }
 
 static PyNumberMethods union_as_number = {
+        .nb_matrix_multiply = _PyAnnotated_Matmul,  // Add __matmul__ function
         .nb_or = union_nb_or, // Add __or__ function
 };
 
@@ -443,7 +456,7 @@ _Py_union_args(PyObject *self)
 }
 
 static PyObject *
-call_typing_func_object(const char *name, PyObject **args, size_t nargs)
+call_typing_func_object(const char *name, PyObject *args, PyObject *kwargs)
 {
     PyObject *typing = PyImport_ImportModule("typing");
     if (typing == NULL) {
@@ -454,30 +467,51 @@ call_typing_func_object(const char *name, PyObject **args, size_t nargs)
         Py_DECREF(typing);
         return NULL;
     }
-    PyObject *result = PyObject_Vectorcall(func, args, nargs, NULL);
+    PyObject *result = PyObject_Call(func, args, kwargs);
     Py_DECREF(func);
     Py_DECREF(typing);
     return result;
 }
 
-static PyObject *
-type_check(PyObject *arg, const char *msg)
+PyObject *
+_Py_typing_type_check(PyObject *arg, const char *msg, int allow_special_forms)
 {
     if (Py_IsNone(arg)) {
         // NoneType is immortal, so don't need an INCREF
         return (PyObject *)Py_TYPE(arg);
     }
     // Fast path to avoid calling into typing.py
-    if (is_unionable(arg)) {
+    if (_Py_typing_is_type_like(arg)) {
         return Py_NewRef(arg);
     }
     PyObject *message_str = PyUnicode_FromString(msg);
     if (message_str == NULL) {
         return NULL;
     }
-    PyObject *args[2] = {arg, message_str};
-    PyObject *result = call_typing_func_object("_type_check", args, 2);
+
+    PyObject *args = PyTuple_Pack(2, arg, message_str);
     Py_DECREF(message_str);
+    if (args == NULL) {
+        return NULL;
+    }
+
+    PyObject *kwargs = NULL;
+    if (allow_special_forms) {
+        kwargs = PyDict_New();
+        if (kwargs == NULL) {
+            Py_DECREF(args);
+            return NULL;
+        }
+        if (PyDict_SetItemString(kwargs, "allow_special_forms", Py_True) < 0) {
+            Py_DECREF(kwargs);
+            Py_DECREF(args);
+            return NULL;
+        }
+    }
+
+    PyObject *result = call_typing_func_object("_type_check", args, kwargs);
+    Py_XDECREF(kwargs);
+    Py_DECREF(args);
     return result;
 }
 

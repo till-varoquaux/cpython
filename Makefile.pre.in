@@ -577,6 +577,7 @@ OBJECT_OBJS=	\
 		Objects/unicode_writer.o \
 		Objects/unicodectype.o \
 		Objects/unicodeobject.o \
+		Objects/annotatedobject.o \
 		Objects/unionobject.o \
 		Objects/weakrefobject.o \
 		@PERF_TRAMPOLINE_OBJ@

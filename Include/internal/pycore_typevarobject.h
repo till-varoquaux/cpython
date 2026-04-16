@@ -18,6 +18,14 @@ extern int _Py_initialize_generic(PyInterpreterState *);
 extern void _Py_clear_generic_types(PyInterpreterState *);
 extern int _Py_typing_type_repr(PyUnicodeWriter *, PyObject *);
 
+extern int _Py_is_unpacked_typevartuple(PyObject *);
+extern int _Py_typing_init_parameters(PyObject *, PyObject **, PyObject *);
+
+extern PyObject * _Py_typing_proxy_getattro(PyObject *, PyObject *, PyObject *, const char * const *, const char * const *);
+extern PyObject * _Py_typing_proxy_dir(PyObject *, const char * const *);
+
+extern PyObject * _Py_typing_set_orig_class(PyObject *, PyObject *);
+
 extern PyTypeObject _PyTypeAlias_Type;
 extern PyTypeObject _PyNoDefault_Type;
 extern PyObject _Py_NoDefaultStruct;

@@ -1,0 +1,1 @@
+Implement native support for annotated types using the ``@`` operator on types and type-like objects (e.g., ``int @["metadata"]``). This creates a :class:`types.AnnotatedType` object, which is compatible with :class:`typing.Annotated`.

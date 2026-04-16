@@ -1856,6 +1856,8 @@ class TestTypeRepr(unittest.TestCase):
         self.assertEqual(type_repr(None), "None")
         self.assertEqual(type_repr(1), "1")
         self.assertEqual(type_repr("1"), "'1'")
+        self.assertEqual(type_repr(int @"a"), "int @'a'")
+        self.assertEqual(type_repr((int | float) @"a"), "(int | float) @'a'")
         self.assertEqual(type_repr(Format.VALUE), repr(Format.VALUE))
         self.assertEqual(type_repr(MyClass()), "my repr")
         # gh138558 tests
