@@ -40,6 +40,7 @@ from _typing import (
     TypeAliasType,
     Generic,
     Union,
+    Annotated,
     NoDefault,
 )
 
@@ -462,12 +463,16 @@ def _eval_type(t, globalns, localns, type_params, *, recursive_guard=frozenset()
         return evaluate_forward_ref(t, globals=globalns, locals=localns,
                                     type_params=type_params, owner=owner,
                                     _recursive_guard=recursive_guard, format=format)
-    if isinstance(t, (_GenericAlias, GenericAlias, Union)):
+    if isinstance(t, (_GenericAlias, GenericAlias, Union, Annotated)):
         if isinstance(t, GenericAlias):
             args = tuple(
                 _make_forward_ref(arg, parent_fwdref=parent_fwdref) if isinstance(arg, str) else arg
                 for arg in t.__args__
             )
+        elif isinstance(t, Annotated) and isinstance(t.__args__[0], str):
+            args = list(t.__args__)
+            args[0] = _make_forward_ref(args[0], parent_fwdref=parent_fwdref)
+            args = tuple(args)
         else:
             args = t.__args__
 
@@ -484,6 +489,8 @@ def _eval_type(t, globalns, localns, type_params, *, recursive_guard=frozenset()
             return _rebuild_generic_alias(t, ev_args)
         if isinstance(t, Union):
             return functools.reduce(operator.or_, ev_args)
+        if isinstance(t, Annotated):
+            return functools.reduce(operator.matmul, ev_args)
         else:
             return t.copy_with(ev_args)
     return t
@@ -556,6 +563,9 @@ class _SpecialForm(_Final, _NotIterable, _root=True):
 
     def __subclasscheck__(self, cls):
         raise TypeError(f"{self} cannot be used with issubclass()")
+
+    def __matmul__(self, other):
+        return Annotated[self, other]
 
     @_tp_cache
     def __getitem__(self, parameters):
@@ -1326,6 +1336,9 @@ class _BaseGenericAlias(_Final, _root=True):
         raise TypeError("Subscripted generics cannot be used with"
                         " class and instance checks")
 
+    def __matmul__(self, other):
+        return Annotated[self, other]
+
     def __dir__(self):
         return list(set(super().__dir__()
                 + [attr for attr in dir(self.__origin__) if not _is_dunder(attr)]))
@@ -1400,6 +1413,9 @@ class _GenericAlias(_BaseGenericAlias, _root=True):
 
     def __ror__(self, left):
         return Union[left, self]
+
+    def __matmul__(self, other):
+        return Annotated[self, other]
 
     @_tp_cache
     def __getitem__(self, args):
@@ -2191,118 +2207,41 @@ class Protocol(Generic, metaclass=_ProtocolMeta):
             cls.__init__ = _no_init_or_replace_init
 
 
-class _AnnotatedAlias(_NotIterable, _GenericAlias, _root=True):
-    """Runtime representation of an annotated type.
+class _AnnotatedAliasMeta(type):
+    def __instancecheck__(self, inst: object) -> bool:
+        import warnings
+        warnings._deprecated("_AnnotatedAlias", remove=(3, 23))
+        return isinstance(inst, Annotated)
 
-    At its core 'Annotated[t, dec1, dec2, ...]' is an alias for the type 't'
-    with extra metadata. The alias behaves like a normal typing alias.
-    Instantiating is the same as instantiating the underlying type; binding
-    it to types is also the same.
-
-    The metadata itself is stored in a '__metadata__' attribute as a tuple.
-    """
-
-    def __init__(self, origin, metadata):
-        if isinstance(origin, _AnnotatedAlias):
-            metadata = origin.__metadata__ + metadata
-            origin = origin.__origin__
-        super().__init__(origin, origin, name='Annotated')
-        self.__metadata__ = metadata
-
-    def copy_with(self, params):
-        assert len(params) == 1
-        new_type = params[0]
-        return _AnnotatedAlias(new_type, self.__metadata__)
-
-    def __repr__(self):
-        return "typing.Annotated[{}, {}]".format(
-            _type_repr(self.__origin__),
-            ", ".join(repr(a) for a in self.__metadata__)
-        )
-
-    def __reduce__(self):
-        return operator.getitem, (
-            Annotated, (self.__origin__,) + self.__metadata__
-        )
+    def __subclasscheck__(self, inst: type) -> bool:
+        import warnings
+        warnings._deprecated("_AnnotatedAlias", remove=(3, 23))
+        return issubclass(inst, Annotated)
 
     def __eq__(self, other):
-        if not isinstance(other, _AnnotatedAlias):
-            return NotImplemented
-        return (self.__origin__ == other.__origin__
-                and self.__metadata__ == other.__metadata__)
+        import warnings
+        warnings._deprecated("_AnnotatedAlias", remove=(3, 23))
+        if other is _AnnotatedAlias or other is Annotated:
+            return True
+        return NotImplemented
 
     def __hash__(self):
-        return hash((self.__origin__, self.__metadata__))
-
-    def __getattr__(self, attr):
-        if attr in {'__name__', '__qualname__'}:
-            return 'Annotated'
-        return super().__getattr__(attr)
-
-    def __mro_entries__(self, bases):
-        return (self.__origin__,)
+        return hash(Annotated)
 
 
-@_TypedCacheSpecialForm
-@_tp_cache(typed=True)
-def Annotated(self, *params):
-    """Add context-specific metadata to a type.
+class _AnnotatedAlias(metaclass=_AnnotatedAliasMeta):
+    """Compatibility hack.
 
-    Example: Annotated[int, runtime_check.Unsigned] indicates to the
-    hypothetical runtime_check module that this type is an unsigned int.
-    Every other consumer of this type can ignore this metadata and treat
-    this type as int.
+    A class named _AnnotatedAlias used to be used to implement
+    typing.Annotated. This class exists to serve as a shim to preserve
+    the meaning of some code that used to use _AnnotatedAlias
+    directly.
 
-    The first argument to Annotated must be a valid type.
-
-    Details:
-
-    - It's an error to call `Annotated` with less than two arguments.
-    - Access the metadata via the ``__metadata__`` attribute::
-
-        assert Annotated[int, '$'].__metadata__ == ('$',)
-
-    - Nested Annotated types are flattened::
-
-        assert Annotated[Annotated[T, Ann1, Ann2], Ann3] == Annotated[T, Ann1, Ann2, Ann3]
-
-    - Instantiating an annotated type is equivalent to instantiating the
-    underlying type::
-
-        assert Annotated[C, Ann1](5) == C(5)
-
-    - Annotated can be used as a generic type alias::
-
-        type Optimized[T] = Annotated[T, runtime.Optimize()]
-        # type checker will treat Optimized[int]
-        # as equivalent to Annotated[int, runtime.Optimize()]
-
-        type OptimizedList[T] = Annotated[list[T], runtime.Optimize()]
-        # type checker will treat OptimizedList[int]
-        # as equivalent to Annotated[list[int], runtime.Optimize()]
-
-    - Annotated cannot be used with an unpacked TypeVarTuple::
-
-        type Variadic[*Ts] = Annotated[*Ts, Ann1]  # NOT valid
-
-      This would be equivalent to::
-
-        Annotated[T1, T2, T3, ..., Ann1]
-
-      where T1, T2 etc. are TypeVars, which would be invalid, because
-      only one type should be passed to Annotated.
     """
-    if len(params) < 2:
-        raise TypeError("Annotated[...] should be used "
-                        "with at least two arguments (a type and an "
-                        "annotation).")
-    if _is_unpacked_typevartuple(params[0]):
-        raise TypeError("Annotated[...] should not be used with an "
-                        "unpacked TypeVarTuple")
-    msg = "Annotated[t, ...]: t must be a type."
-    origin = _type_check(params[0], msg, allow_special_forms=True)
-    metadata = tuple(params[1:])
-    return _AnnotatedAlias(origin, metadata)
+    def __new__(cls, origin, metadata):
+        import warnings
+        warnings._deprecated("_AnnotatedAlias", remove=(3, 23))
+        return Annotated[origin, *metadata]
 
 
 def runtime_checkable(cls):
@@ -2514,9 +2453,10 @@ def _add_type_params_to_scope(type_params, globalns, localns, is_class):
 
 def _strip_annotations(t):
     """Strip the annotations from a given type."""
-    if isinstance(t, _AnnotatedAlias):
-        return _strip_annotations(t.__origin__)
-    if hasattr(t, "__origin__") and t.__origin__ in (Required, NotRequired, ReadOnly):
+    if isinstance(t, Annotated):
+        return _strip_annotations(t.__args__[0])
+    if hasattr(t, "__origin__") and t.__origin__ in (
+            Required, NotRequired, ReadOnly):
         return _strip_annotations(t.__args__[0])
     if isinstance(t, _GenericAlias):
         stripped_args = tuple(_strip_annotations(a) for a in t.__args__)
@@ -2555,7 +2495,7 @@ def get_origin(tp):
         >>> assert get_origin(List[Tuple[T, T]][int]) is list
         >>> assert get_origin(P.args) is P
     """
-    if isinstance(tp, _AnnotatedAlias):
+    if isinstance(tp, Annotated):
         return Annotated
     if isinstance(tp, (_BaseGenericAlias, GenericAlias,
                        ParamSpecArgs, ParamSpecKwargs)):
@@ -2581,14 +2521,12 @@ def get_args(tp):
         >>> assert get_args(Union[int, Tuple[T, int]][str]) == (int, Tuple[str, int])
         >>> assert get_args(Callable[[], T][int]) == ([], int)
     """
-    if isinstance(tp, _AnnotatedAlias):
-        return (tp.__origin__,) + tp.__metadata__
     if isinstance(tp, (_GenericAlias, GenericAlias)):
         res = tp.__args__
         if _should_unflatten_callable_args(tp, res):
             res = (list(res[:-1]), res[-1])
         return res
-    if isinstance(tp, Union):
+    if isinstance(tp, (Annotated, Union)):
         return tp.__args__
     return ()
 
@@ -3511,6 +3449,9 @@ class NewType:
 
     def __reduce__(self):
         return self.__qualname__
+
+    def __matmul__(self, other):
+        return Annotated[self, other]
 
     def __or__(self, other):
         return Union[self, other]

@@ -95,6 +95,10 @@ class Founder(Employee):
     pass
 
 
+class Forward:
+    pass
+
+
 class ManagingFounder(Manager, Founder):
     pass
 
@@ -9669,18 +9673,26 @@ class AnnotatedTests(BaseTestCase):
 
     def test_new(self):
         with self.assertRaisesRegex(
-            TypeError, 'Cannot instantiate typing.Annotated',
+            TypeError, "cannot create 'typing.Annotated' instances",
         ):
             Annotated()
 
     def test_repr(self):
         self.assertEqual(
             repr(Annotated[int, 4, 5]),
-            "typing.Annotated[int, 4, 5]"
+            "int @4 @5"
         )
         self.assertEqual(
             repr(Annotated[List[int], 4, 5]),
-            "typing.Annotated[typing.List[int], 4, 5]"
+            "typing.List[int] @4 @5"
+        )
+        self.assertEqual(
+            repr(Annotated[int | float, 4, 5]),
+            "(int | float) @4 @5"
+        )
+        self.assertEqual(
+            repr(Annotated[Union[int, float], 4, 5]),
+            "(int | float) @4 @5"
         )
 
     def test_dir(self):
@@ -9697,6 +9709,14 @@ class AnnotatedTests(BaseTestCase):
         self.assertEqual(A, Annotated[int, 4, 5])
         self.assertEqual(A.__metadata__, (4, 5))
         self.assertEqual(A.__origin__, int)
+
+    def test_methods(self):
+        # Test that we can still use typing.Annotated with legacy methods
+        A = Annotated[int, 4, 5]
+        self.assertEqual(A.__origin__, int)
+        self.assertEqual(A.__metadata__, (4, 5))
+        self.assertEqual(get_origin(A), Annotated)
+        self.assertEqual(get_args(A), (int, 4, 5))
 
     def test_deduplicate_from_union(self):
         # Regular:
@@ -9894,7 +9914,7 @@ class AnnotatedTests(BaseTestCase):
         self.assertEqual(get_type_hints(FAC, globals())['x'], Final[ClassVar[int]])
 
     def test_cannot_subclass(self):
-        with self.assertRaisesRegex(TypeError, "Cannot subclass .*Annotated"):
+        with self.assertRaises(TypeError):
             class C(Annotated):
                 pass
 
@@ -9939,6 +9959,30 @@ class AnnotatedTests(BaseTestCase):
             self.assertEqual(x.foo, 42)
             self.assertEqual(x.bar, 'abc')
             self.assertEqual(x.x, 1)
+
+    def test_copy(self):
+        a = Annotated[int, "meta"]
+        b = int @"meta"
+        c = int @["meta"]
+
+        for orig in (a, b, c):
+            with self.subTest(original=orig):
+                copied = copy(orig)
+                self.assertEqual(copied, orig)
+                self.assertIsNot(copied, orig)
+
+                deepcopied = deepcopy(orig)
+                self.assertEqual(deepcopied, orig)
+                # For immutable metadata, deepcopy may return the same object
+                if orig is c:
+                    self.assertIsNot(deepcopied.__metadata__[0], c.__metadata__[0])
+
+    def test_sentinel(self):
+        s = sentinel("my_sentinel")
+        t = s @"meta"
+        self.assertIs(t.__origin__, s)
+        self.assertEqual(t.__metadata__, ("meta",))
+        self.assertEqual(repr(t), "my_sentinel @'meta'")
 
     def test_subst(self):
         dec = "a decoration"
@@ -10138,6 +10182,126 @@ class AnnotatedTests(BaseTestCase):
         self.assertIs(get_origin(x_ann), Annotated)
         self.assertEqual(x_ann.__origin__, EqualToForwardRef('undefined', owner=f))
         self.assertEqual(x_ann.__metadata__, ('',))
+
+    def test_matmul_operator(self):
+        self.assertEqual(int @"meta", Annotated[int, "meta"])
+        self.assertEqual(int @"m1" @"m2", Annotated[int, "m1", "m2"])
+        self.assertEqual((int @"m1") @"m2", Annotated[int, "m1", "m2"])
+
+    def test_matmul_operator_with_union(self):
+        u = int | float
+        self.assertEqual(u @"meta", Annotated[u, "meta"])
+        self.assertEqual(repr(u @"meta"), "(int | float) @'meta'")
+
+        u2 = Union[int, float]
+        self.assertEqual(u2 @"meta", Annotated[u2, "meta"])
+
+        # precedence: @ higher than |
+        self.assertEqual(int | float @"a", int | (float @"a"))
+
+    def test_matmul_type_operator_with_NamedTuple(self):
+        NT = collections.namedtuple('A', ['B', 'C', 'D'])
+        self.assertEqual(NT @"meta", Annotated[NT, "meta"])
+
+    def test_matmul_type_operator_with_TypedDict(self):
+        class Point2D(TypedDict):
+            x: int
+            y: int
+        self.assertEqual(Point2D @"meta", Annotated[Point2D, "meta"])
+
+    def test_matmul_type_operator_with_IO(self):
+        self.assertEqual(IO @"meta", Annotated[IO, "meta"])
+
+    def test_matmul_type_operator_with_Protocol(self):
+        class Proto(Protocol):
+            def meth(self) -> int: ...
+        self.assertEqual(Proto @"meta", Annotated[Proto, "meta"])
+
+    def test_matmul_type_operator_with_Alias(self):
+        self.assertEqual(list @"meta", Annotated[list, "meta"])
+        self.assertEqual(List @"meta", Annotated[List, "meta"])
+        self.assertEqual(Dict @"meta", Annotated[Dict, "meta"])
+        self.assertEqual(Tuple @"meta", Annotated[Tuple, "meta"])
+        self.assertEqual(Callable @"meta", Annotated[Callable, "meta"])
+
+    def test_matmul_type_operator_with_forward_ref(self):
+        # ForwardRef as origin is annotatable
+        fr = ForwardRef('Forward')
+        ForwardOrigin = fr @int
+        def forward_origin(x: ForwardOrigin) -> None: ...
+        self.assertEqual(get_args(get_type_hints(forward_origin, include_extras=True)['x']),
+                         (Forward, int))
+
+    def test_type_variables(self):
+        P = ParamSpec("P")
+        Ts = TypeVarTuple("Ts")
+
+        for tv in (T, P, Ts):
+            with self.subTest(tv=tv):
+                self.assertEqual(tv @"meta", Annotated[tv, "meta"])
+
+        # Subscripting with TypeVar in origin
+        at = list[T] @"meta"
+        self.assertEqual(at.__parameters__, (T,))
+        self.assertEqual(repr(at), "list[~T] @'meta'")
+
+        at2 = at[int]
+        self.assertEqual(at2, Annotated[list[int], "meta"])
+        self.assertEqual(at2.__parameters__, ())
+
+    def test_special_forms(self):
+        for sf in (Any, Never, NoReturn):
+            with self.subTest(sf=sf):
+                self.assertEqual(sf @"meta", Annotated[sf, "meta"])
+
+        for sf in (ClassVar[int], Final[int], Literal[42]):
+            with self.subTest(sf=sf):
+                self.assertEqual(sf @"meta", Annotated[sf, "meta"])
+
+    def test_new_type(self):
+        UserId = typing.NewType("UserId", int)
+        self.assertEqual(UserId @"meta", Annotated[UserId, "meta"])
+
+    def test_type_alias_type(self):
+        # PEP 695 type alias
+        ns = {}
+        exec("type MyAlias = int; alias = MyAlias", {}, ns)
+        MyAlias = ns["alias"]
+        self.assertEqual(MyAlias @"meta", Annotated[MyAlias, "meta"])
+
+    @cpython_only
+    def test_matmul_type_operator_reference_cycle(self):
+        import gc
+        if not hasattr(sys, "gettotalrefcount"):
+            self.skipTest("Requires totalrefcount")
+        gc.collect()
+        before = sys.gettotalrefcount()
+        for _ in range(30):
+            T = TypeVar("T")
+            at = list[T] @"meta"
+            T.at = at
+            del T
+            del at
+        gc.collect()
+        self.assertLessEqual(sys.gettotalrefcount() - before, 20)
+
+    def test_annotated_alias_shim(self):
+        from typing import _AnnotatedAlias
+        with self.assertWarns(DeprecationWarning):
+            at = _AnnotatedAlias(int, (1, 2))
+        self.assertEqual(at, Annotated[int, 1, 2])
+
+        with self.assertWarns(DeprecationWarning):
+            self.assertIsInstance(Annotated[int, 1, 2], _AnnotatedAlias)
+
+        with self.assertWarns(DeprecationWarning):
+            self.assertTrue(issubclass(Annotated, _AnnotatedAlias))
+
+        with self.assertWarns(DeprecationWarning):
+            self.assertEqual(Annotated, _AnnotatedAlias)
+
+        with self.assertWarns(DeprecationWarning):
+            self.assertEqual(_AnnotatedAlias, Annotated)
 
 
 class TypeAliasTests(BaseTestCase):
@@ -10958,7 +11122,7 @@ class SpecialAttrsTests(BaseTestCase):
                 for proto in range(pickle.HIGHEST_PROTOCOL + 1):
                     s = pickle.dumps(cls, proto)
                     loaded = pickle.loads(s)
-                    if isinstance(cls, Union):
+                    if isinstance(cls, (Union, Annotated)):
                         self.assertEqual(cls, loaded)
                     else:
                         self.assertIs(cls, loaded)

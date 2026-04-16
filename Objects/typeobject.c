@@ -2,6 +2,7 @@
 
 #include "Python.h"
 #include "pycore_abstract.h"      // _PySequence_IterSearch()
+#include "pycore_annotatedobject.h" // _PyAnnotated_Matmul
 #include "pycore_call.h"          // _PyObject_VectorcallTstate()
 #include "pycore_code.h"          // CO_FAST_FREE
 #include "pycore_descrobject.h"   // _PyMember_GetOffset()
@@ -7277,6 +7278,7 @@ type_is_gc(PyObject *tp)
 
 
 static PyNumberMethods type_as_number = {
+        .nb_matrix_multiply = _PyAnnotated_Matmul,  // Add __matmul__ function
         .nb_or = _Py_union_type_or, // Add __or__ function
 };
 

@@ -36,6 +36,12 @@ def pickle_union(obj):
 
 pickle(type(int | str), pickle_union)
 
+def pickle_annotated(obj):
+    import typing, operator
+    return operator.getitem, (typing.Annotated, obj.__args__)
+
+pickle(type(int @"meta"), pickle_annotated)
+
 def pickle_super(obj):
     return super, (obj.__thisclass__, obj.__self__)
 

@@ -310,6 +310,9 @@ class ForwardRef:
     def __ror__(self, other):
         return types.UnionType[other, self]
 
+    def __matmul__(self, other):
+        return types.AnnotatedType[self, other]
+
     def __repr__(self):
         extra = []
         if self.__forward_module__ is not None:

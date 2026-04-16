@@ -6240,6 +6240,59 @@ The user-exposed type for the union object can be accessed from
    of :class:`types.UnionType`, which remains an alias for :class:`typing.Union`.
 
 
+.. _types-annotated:
+
+Annotated Type
+--------------
+
+.. index::
+   pair: object; Annotated
+   pair: annotated; type
+
+An annotated object holds the value of the ``@`` (matrix multiplication)
+operation on a type and a metadata object. These types are intended
+primarily for :term:`type annotations <annotation>`. The annotated type
+expression enables cleaner type hinting syntax compared to subscripting
+:class:`typing.Annotated`.
+
+.. describe:: T @M
+
+   Defines an annotated object which holds type *T* and metadata *M*.
+   It is equivalent to ``typing.Annotated[T, M]``. For example,
+   the following function expects an argument of type :class:`int` with
+   metadata ``"unsigned"``::
+
+      def process(number: int @"unsigned") -> None:
+          ...
+
+.. describe:: annotated_object == other
+
+   Annotated objects can be tested for equality with other annotated objects.
+   Details:
+
+   * Nested annotated types are flattened::
+
+       int @"m1" @"m2" == typing.Annotated[int, "m1", "m2"]
+
+   * When comparing annotated types, the order of metadata is preserved::
+
+       int @"m1" @"m2" != int @"m2" @"m1"
+
+   * It creates instances of :class:`typing.Annotated`::
+
+      int @"meta" == typing.Annotated[int, "meta"]
+      type(int @"meta") is typing.Annotated
+
+The user-exposed type for the annotated object can be accessed from
+:class:`typing.Annotated` and used for :func:`isinstance` checks::
+
+   >>> import typing
+   >>> isinstance(int @"meta", typing.Annotated)
+   True
+
+.. versionadded:: 3.16
+
+
 .. _typesother:
 
 Other Built-in Types

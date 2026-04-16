@@ -1,6 +1,7 @@
 /* _types module */
 
 #include "Python.h"
+#include "pycore_annotatedobject.h" // _PyAnnotated_Type
 #include "pycore_descrobject.h"   // _PyMethodWrapper_Type
 #include "pycore_lazyimportobject.h" // PyLazyImport_Type
 #include "pycore_namespace.h"     // _PyNamespace_Type
@@ -48,6 +49,7 @@ _types_exec(PyObject *m)
     EXPORT_STATIC_TYPE("SimpleNamespace", _PyNamespace_Type);
     EXPORT_STATIC_TYPE("TracebackType", PyTraceBack_Type);
     EXPORT_STATIC_TYPE("UnionType", _PyUnion_Type);
+    EXPORT_STATIC_TYPE("AnnotatedType", _PyAnnotated_Type);
     EXPORT_STATIC_TYPE("WrapperDescriptorType", PyWrapperDescr_Type);
 #undef EXPORT_STATIC_TYPE
     return 0;

@@ -1403,6 +1403,15 @@ These can be used as types in annotations. They all support subscription using
 
    .. describe:: Annotated[<type>, <metadata>]
 
+      Special type form to add context-specific metadata to an existing type.
+
+   Annotated types can also be created using the ``@`` operator::
+
+      T @M
+
+   This is equivalent to ``Annotated[T, M]`` but results in a
+   :class:`types.AnnotatedType` object.
+
    Here is an example of how you might use ``Annotated`` to add metadata to
    type annotations if you were doing range analysis:
 

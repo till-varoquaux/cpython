@@ -66,6 +66,7 @@ except ImportError:
     GetSetDescriptorType = type(FunctionType.__code__)
     MemberDescriptorType = type(FunctionType.__globals__)
 
+    AnnotatedType = type(int @"meta")
     GenericAlias = type(list[int])
     UnionType = type(int | str)
 
