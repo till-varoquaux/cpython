@@ -1,0 +1,17 @@
+--- a/python.worker.mjs	2026-04-23 00:48:07.473522082 -0400
++++ b/python.worker.mjs	2026-04-23 00:48:07.473522082 -0400
+@@ -89,6 +89,14 @@
+ 
+ const modulePromise = createEmscriptenModule(emscriptenSettings);
+ 
++self.addEventListener("error", (e) => {
++  console.error("Worker global error:", e);
++});
++
++self.addEventListener("unhandledrejection", (e) => {
++  console.error("Worker unhandled rejection:", e.reason);
++});
++
+ onmessage = async (event) => {
+   if (event.data.type === "run") {
+     const Module = await modulePromise;

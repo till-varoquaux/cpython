@@ -1,0 +1,26 @@
+diff --git a/index.html b/index.html
+index 9c89c9c0ed3..abc207aead7 100644
+--- a/index.html
++++ b/index.html
+@@ -9,9 +9,8 @@
+         <title>wasm-python terminal</title>
+         <link
+             rel="stylesheet"
+-            href="https://unpkg.com/xterm@4.18.0/css/xterm.css"
++            href="https://unpkg.com/@xterm/xterm@6.0.0/css/xterm.css"
+             crossorigin
+-            integrity="sha384-4eEEn/eZgVHkElpKAzzPx/Kow/dTSgFk1BNe+uHdjHa+NkZJDh5Vqkq31+y7Eycd"
+         >
+         <style>
+             body {
+@@ -46,9 +45,8 @@
+             }
+         </style>
+         <script
+-            src="https://unpkg.com/xterm@4.18.0/lib/xterm.js"
++            src="https://unpkg.com/@xterm/xterm@6.0.0/lib/xterm.js"
+             crossorigin
+-            integrity="sha384-yYdNmem1ioP5Onm7RpXutin5A8TimLheLNQ6tnMi01/ZpxXdAwIm2t4fJMx1Djs+"
+         ></script>
+         <script
+             src="https://cdnjs.cloudflare.com/ajax/libs/ace/1.43.1/ace.js"

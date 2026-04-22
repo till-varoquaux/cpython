@@ -1,0 +1,65 @@
+--- a/index.html	2026-04-23 01:08:03.178920981 -0400
++++ b/index.html	2026-04-23 01:08:03.181483012 -0400
+@@ -82,6 +82,13 @@
+                             "message",
+                             this.handleMessageFromWorker,
+                         );
++                        this.worker.addEventListener(
++                            "error",
++                            (e) => {
++                                console.error("Worker process error event:", e);
++                                this.standardIO.message(`Worker process error: ${e.message || "Unknown error"}`);
++                            }
++                        );
+                     }
+                 }
+ 
+@@ -582,9 +589,21 @@
+                     terminal.reset(); // reset the history
+                     programRunning(true);
+                     const code = editor.getValue();
++                    const wrappedCode = `
++import os
++os.environ["TYPER_USE_RICH"] = "0"
++os.environ["_TYPER_COMPLETE_TEST_DISABLE_SHELL_DETECTION"] = "1"
++import select
++for attr in ['poll', 'epoll', 'devpoll', 'kqueue']:
++    if hasattr(select, attr):
++        try:
++            delattr(select, attr)
++        except AttributeError:
++            pass
++` + code;
+                     pythonWorkerManager.run({
+                         args: ["main.py"],
+-                        files: { "main.py": code },
++                        files: { "main.py": wrappedCode },
+                     });
+                 });
+ 
+@@ -592,6 +611,17 @@
+                     terminal.clear();
+                     terminal.reset(); // reset the history
+                     const REPL = `
++import os
++os.environ["TYPER_USE_RICH"] = "0"
++os.environ["_TYPER_COMPLETE_TEST_DISABLE_SHELL_DETECTION"] = "1"
++import select
++for attr in ['poll', 'epoll', 'devpoll', 'kqueue']:
++    if hasattr(select, attr):
++        try:
++            delattr(select, attr)
++        except AttributeError:
++            pass
++
+ class WASMREPLKeyboardInterrupt(KeyboardInterrupt):
+     pass
+ 
+@@ -631,7 +661,6 @@
+ 
+                 const finishedCallback = () => {
+                     programRunning(false);
+-                    pythonWorkerManager.reset();
+                 };
+ 
+                 const pythonWorkerManager = new WorkerManager(

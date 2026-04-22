@@ -1,0 +1,27 @@
+--- a/index.html	2026-04-23 02:02:20.638387222 -0400
++++ b/index.html	2026-04-23 02:02:20.658104001 -0400
+@@ -641,16 +641,21 @@
+                     finishedCallback,
+                 );
+             };
+-            var editor;
++             /* editor moved to window */ 
+             document.addEventListener("DOMContentLoaded", () => {
+-                editor = ace.edit("editor");
+-                editor.session.setMode("ace/mode/python");
++                window.editor = ace.edit("editor");
++                window.editor.session.setMode("ace/mode/python");
+             });
+         </script>
+     </head>
+     <body>
+         <div id="repldemo">
+             <h1>Simple REPL for Python WASM</h1>
++            <div style="margin-bottom: 10px;">
++                Load Demo:
++                <a href="#" onclick="editor.setValue(window.DEMOS.typer, -1); return false;">Typer</a> |
++                <a href="#" onclick="editor.setValue(window.DEMOS.annotationlib, -1); return false;">Annotationlib</a>
++            </div>
+             <div id="editor">print('Welcome to WASM!')</div>
+             <div class="button-container">
+                 <button id="run" disabled>Run code</button>

@@ -1,0 +1,24 @@
+--- a/index.html
++++ b/index.html
+@@ -6,7 +6,7 @@
+         <meta name="viewport" content="width=device-width, initial-scale=1.0">
+         <meta name="author" content="Katie Bell, Adam Hartz">
+         <meta name="description" content="Simple REPL for Python WASM">
+-        <title>wasm-python terminal</title>
++        <title>Shorthand syntax for Annotated type metadata</title>
+         <link
+             rel="stylesheet"
+             href="https://unpkg.com/@xterm/xterm@6.0.0/css/xterm.css"
+@@ -650,7 +650,11 @@
+     </head>
+     <body>
+         <div id="repldemo">
+-            <h1>Simple REPL for Python WASM</h1>
++            <h1>Shorthand syntax for Annotated type metadata - WASM Demo</h1>
++            <p>
++                This is a demonstration of the proposed shorthand syntax for <code>typing.Annotated</code>.
++                See the <a href="https://till-varoquaux.github.io/peps/pep-9999/">PEP draft</a> for more details.
++            </p>
+             <div style="margin-bottom: 10px;">
+                 Load Demo:
+                 <a href="#" onclick="editor.setValue(window.DEMOS.typer, -1); return false;">Typer</a> |
