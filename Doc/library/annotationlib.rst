@@ -117,6 +117,15 @@ in Python 3.14. Stringified annotations are still used if
 ``from __future__ import annotations`` is present, but this behavior will
 eventually be removed.
 
+Terminology
+-----------
+
+Non-Typing Annotation
+    An annotation that is not intended to be understood by static type checkers
+    or used as a type hint. Such annotations often contain arbitrary expressions
+    evaluated at runtime, standard :pep:`3107` / :pep:`526` behavior. For example,
+    when using ``@no_type_check`` wrapping a function with arbitrary expressions.
+
 Classes
 -------
 
@@ -150,17 +159,29 @@ Classes
       for defined values, and :class:`ForwardRef` proxies for undefined
       values. Real objects may contain references to :class:`ForwardRef`
       proxy objects.
+.. attribute:: STRING
+   :value: 4
 
-   .. attribute:: STRING
-      :value: 4
+   Values are the text string of the annotation as it appears in the
+   source code, up to modifications including, but not restricted to,
+   whitespace normalizations and constant values optimizations.
 
-      Values are the text string of the annotation as it appears in the
-      source code, up to modifications including, but not restricted to,
-      whitespace normalizations and constant values optimizations.
+   The exact values of these strings may change in future versions of Python.
 
-      The exact values of these strings may change in future versions of Python.
+.. attribute:: TYPE
+   :value: 5
 
-   .. versionadded:: 3.14
+   Similar to :attr:`Format.FORWARDREF`, this format evaluates the annotation and replaces
+   undefined names with :class:`ForwardRef` objects. However, instead of returning an
+   unresolvable expression as a single ``ForwardRef``, it mimics the behavior of
+   type checkers by recursively resolving recognized operators into structural type objects.
+
+   Specifically, it recursively resolves the ``|`` operator into :class:`typing.Union`,
+   the ``@`` operator into :class:`typing.Annotated`,
+   and subscripting (``[]``) into :class:`types.GenericAlias`. Undefined names within these
+   structures remain as ``ForwardRef`` objects.
+
+   .. versionadded:: 3.16
 
 .. class:: ForwardRef
 
@@ -341,12 +362,12 @@ Functions
    * VALUE: :attr:`!object.__annotations__` is tried first; if that does not exist,
      the :attr:`!object.__annotate__` function is called if it exists.
 
-   * FORWARDREF: If :attr:`!object.__annotations__` exists and can be evaluated successfully,
+   * FORWARDREF, TYPE: If :attr:`!object.__annotations__` exists and can be evaluated successfully,
      it is used; otherwise, the :attr:`!object.__annotate__` function is called. If it
      does not exist either, :attr:`!object.__annotations__` is tried again and any error
      from accessing it is re-raised.
 
-     * When calling :attr:`!object.__annotate__` it is first called with :attr:`~Format.FORWARDREF`.
+     * When calling :attr:`!object.__annotate__` it is first called with the requested format.
        If this is not implemented, it will then check if :attr:`~Format.VALUE_WITH_FAKE_GLOBALS`
        is supported and use that in the fake globals environment.
        If neither of these formats are supported, it will fall back to using :attr:`~Format.VALUE`.

@@ -56,6 +56,9 @@ class TestFormat(unittest.TestCase):
         self.assertEqual(Format.STRING.value, 4)
         self.assertEqual(Format.STRING, 4)
 
+        self.assertEqual(Format.TYPE.value, 5)
+        self.assertEqual(Format.TYPE, 5)
+
 
 class TestForwardRefFormat(unittest.TestCase):
     def test_closure(self):
@@ -1915,6 +1918,163 @@ class TypeParamsSample[TypeParamsAlias1, TypeParamsAlias2]:
     TypeParamsAlias2 = str
 
 
+class TestTypeFormat(unittest.TestCase):
+    def test_matmul(self):
+        class Example:
+            fwd: undefined
+            a: undefined @"metadata"
+            b: typing.Annotated[undefined, "metadata"]
+            c: undefined @"m1" @"m2"
+            d: list[None @"m1"]
+
+        annos = get_annotations(Example, format=Format.TYPE)
+        fwd = support.EqualToForwardRef("undefined", owner=Example, is_class=True)
+        self.assertEqual(annos["a"], types.AnnotatedType[fwd, "metadata"])
+        self.assertEqual(annos["b"], types.AnnotatedType[fwd, "metadata"])
+        # Nested AnnotatedType for undefined @ "m1" @ "m2"
+        self.assertEqual(annos["c"], types.AnnotatedType[types.AnnotatedType[fwd, "m1"], "m2"])
+        self.assertEqual(annos["d"], list[types.AnnotatedType[None, "m1"]])
+
+    def test_union(self):
+        def func(a: undefined1 | undefined2, b: undefined | int):
+            pass
+
+        annos = get_annotations(func, format=Format.TYPE)
+        annos_fwd = get_annotations(func, format=Format.FORWARDREF)
+        self.assertEqual(annos["a"], annos_fwd["a"])
+
+        u = support.EqualToForwardRef("undefined", owner=func)
+        self.assertEqual(annos["b"].__args__, (u, int))
+        self.assertIs(typing.get_origin(annos["b"]), typing.Union)
+
+    def test_none_type_ops(self):
+        def func(a: None | None, b: None @"Annotation", c: None | undefined):
+            pass
+
+        annos = get_annotations(func, format=Format.TYPE)
+        self.assertEqual(annos["a"], type(None))
+        self.assertEqual(annos["b"], types.AnnotatedType[None, "Annotation"])
+        u = support.EqualToForwardRef("undefined", owner=func)
+        self.assertEqual(annos["c"].__args__, (type(None), u))
+        self.assertIs(typing.get_origin(annos["c"]), types.UnionType)
+
+
+    def test_generic(self):
+        def func(a: list[undefined], b: undefined[int | None], c: undefined[int, str]):
+            pass
+
+        annos = get_annotations(func, format=Format.TYPE)
+        annos_fwd = get_annotations(func, format=Format.FORWARDREF)
+        u = support.EqualToForwardRef("undefined", owner=func)
+        self.assertEqual(annos["a"], types.GenericAlias(list, (u,)))
+        self.assertEqual(annos["b"], annos_fwd["b"])
+        self.assertEqual(annos["c"], annos_fwd["c"])
+
+    def test_attribute(self):
+        def func(a: undefined.attr):
+            pass
+
+        annos = get_annotations(func, format=Format.TYPE)
+        self.assertEqual(annos["a"], support.EqualToForwardRef("undefined.attr", owner=func))
+
+    def test_call(self):
+        def func(a: undefined(1, b=2)):
+            pass
+
+        annos = get_annotations(func, format=Format.TYPE)
+        self.assertEqual(annos["a"], support.EqualToForwardRef("undefined(1, b=2)", owner=func))
+
+    def test_evaluate_recursive(self):
+        # If we use STRING format, we get a single ForwardRef if we evaluate it
+        fwd = ForwardRef("list[undefined]")
+
+        # In Format.VALUE, it should raise NameError because undefined is not defined
+        with self.assertRaises(NameError):
+            fwd.evaluate()
+
+        undefined = int
+        res = fwd.evaluate(locals={"undefined": undefined})
+        self.assertEqual(res, list[int])
+
+        # Test evaluating with Format.TYPE
+        res = fwd.evaluate(format=Format.TYPE)
+        self.assertEqual(res, list[support.EqualToForwardRef("undefined")])
+
+    def test_annotated_metadata_not_structuralized(self):
+        class Example:
+            a: typing.Annotated[int, undefined1 | undefined2]
+            b: typing.Annotated[int, undefined1 @ undefined2]
+            c: int @undefined
+
+        annos = get_annotations(Example, format=Format.TYPE)
+
+        # Metadata should NOT be structuralized into UnionType/AnnotatedType
+        self.assertEqual(
+            annos["a"],
+            types.AnnotatedType[int, support.EqualToForwardRef("undefined1 | undefined2", owner=Example, is_class=True)]
+        )
+
+        self.assertEqual(
+            annos["b"],
+            types.AnnotatedType[int, support.EqualToForwardRef("undefined1 @ undefined2", owner=Example, is_class=True)]
+        )
+
+        self.assertEqual(
+            annos["c"],
+            types.AnnotatedType[int, support.EqualToForwardRef("undefined", owner=Example, is_class=True)]
+        )
+
+    def assertForwardRefEqual(self, actual, arg, **kwargs):
+        self.assertIsInstance(actual, ForwardRef)
+        self.assertEqual(actual.__forward_arg__, arg)
+        for k, v in kwargs.items():
+            self.assertEqual(getattr(actual, f"__forward_{k}__" if k in ("is_class", "is_argument", "module") else f"__{k}__"), v)
+
+    def test_structural_scoping_consistency(self):
+        # Use module-level class to avoid closure cells
+        annos = get_annotations(ConsistencyC, format=Format.TYPE)
+
+        self.assertEqual(typing.get_origin(annos["a"]), types.UnionType)
+        self.assertEqual(annos["a"].__args__[0], int)
+        self.assertForwardRefEqual(annos["a"].__args__[1], "undefined", owner=ConsistencyC, is_class=True)
+
+        self.assertEqual(typing.get_origin(annos["b"]), types.UnionType)
+        # UnionType flattens, so we expect (int, list, ForwardRef)
+        self.assertEqual(len(annos["b"].__args__), 3)
+        self.assertEqual(annos["b"].__args__[0], int)
+        self.assertEqual(annos["b"].__args__[1], list)
+        self.assertForwardRefEqual(annos["b"].__args__[2], "undefined", owner=ConsistencyC, is_class=True)
+
+    def test_structural_type_params(self):
+        annos = get_annotations(ConsistencyCT, format=Format.TYPE)
+        T = ConsistencyCT.__type_params__[0]
+        self.assertEqual(typing.get_origin(annos["a"]), types.UnionType)
+        self.assertEqual(annos["a"].__args__[0], T)
+        self.assertForwardRefEqual(annos["a"].__args__[1], "undefined", owner=ConsistencyCT, is_class=True)
+
+    def test_deepcopy_structural(self):
+        import copy
+        fwd = ForwardRef("list[undefined1]")
+        structural = fwd.evaluate(format=Format.TYPE)
+
+        # This used to raise RecursionError due to __stringifier_dict__ lookups
+        copied = copy.deepcopy(structural)
+
+        # Verify components are equal
+        self.assertEqual(len(structural.__args__), len(copied.__args__))
+        for a, b in zip(structural.__args__, copied.__args__):
+            self.assertEqual(a.__forward_arg__, b.__forward_arg__)
+
+        # The UnionType itself should be equal
+        self.assertEqual(str(structural), str(copied))
+
+        # Verify it also works for nested Annotated
+        fwd_at = ForwardRef("typing.Annotated[undefined1, undefined2 | undefined3]")
+        structural_at = fwd_at.evaluate(format=Format.TYPE)
+        copied_at = copy.deepcopy(structural_at)
+        self.assertEqual(str(structural_at), str(copied_at))
+
+
 class TestForwardRefClass(unittest.TestCase):
     def test_forwardref_instance_type_error(self):
         fr = ForwardRef("int")
@@ -2391,3 +2551,16 @@ class TestAnnotationLib(unittest.TestCase):
                 "warnings",
             },
         )
+
+# These classes are defined at the module level to avoid closure cells
+# when testing annotation scoping (used in test_structural_scoping_consistency).
+# They verify that _structuralize properly deduplicates nested union types
+# and retains exact structural form for mixed concrete/forward-reference types.
+class ConsistencyC:
+    X = int
+    a: int | undefined
+    b: (int | list) | undefined
+
+
+class ConsistencyCT[T]:
+    a: T | undefined
