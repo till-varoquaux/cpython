@@ -2612,7 +2612,20 @@ symtable_visit_expr(struct symtable *st, expr_ty e)
         VISIT_SEQ(st, expr, e->v.TemplateStr.values);
         break;
     case Constant_kind:
-        /* Nothing to do here. */
+        /* In PEP 649 annotation blocks, we rewrite 'None' as a global name
+         * rather than a constant. This allows tools like annotationlib.Format.TYPE
+         * to intercept 'None' via the globals dictionary and handle it as a type expr. */
+        if (Py_IsNone(e->v.Constant.value) && st->st_cur->ste_type == AnnotationBlock) {
+            e->kind = Name_kind;
+            e->v.Name.id = PyUnicode_InternFromString("None");
+            if (e->v.Name.id == NULL) {
+                return 0;
+            }
+            e->v.Name.ctx = Load;
+            if (!symtable_add_def_ctx(st, e->v.Name.id, USE, LOCATION(e), Load)) {
+                return 0;
+            }
+        }
         break;
     /* The following exprs can be assignment targets. */
     case Attribute_kind:

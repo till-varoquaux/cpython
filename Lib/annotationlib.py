@@ -385,7 +385,10 @@ class _Stringifier:
     def __convert_to_ast(self, other):
         if isinstance(other, _Stringifier):
             if isinstance(other.__ast_node__, str):
-                return ast.Name(id=other.__ast_node__), other.__extra_names__
+                node = other.__ast_node__
+                if node == "None":
+                    return ast.Constant(value=None, lineno=1, col_offset=0, end_lineno=1, end_col_offset=4), other.__extra_names__
+                return ast.Name(id=node), other.__extra_names__
             return other.__ast_node__, other.__extra_names__
         elif type(other) is _Template:
             return _template_to_ast(other), None
@@ -448,7 +451,9 @@ class _Stringifier:
     def __get_ast(self):
         node = self.__ast_node__
         if isinstance(node, str):
-            return ast.Name(id=node)
+            if node == "None":
+                return ast.Constant(value=None, lineno=1, col_offset=0, end_lineno=1, end_col_offset=4)
+            return ast.Name(id=node, ctx=ast.Load(), lineno=1, col_offset=0)
         return node
 
     def __make_new(self, node, extra_names=None):
