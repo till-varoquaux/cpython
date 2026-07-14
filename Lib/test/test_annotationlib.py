@@ -238,6 +238,14 @@ class TestForwardRefFormat(unittest.TestCase):
         )
 
 
+    def test_none_ops(self):
+        def func(a: None | None, b: None | undefined):
+            pass
+
+        annos = get_annotations(func, format=Format.FORWARDREF)
+        self.assertEqual(annos["a"], support.EqualToForwardRef("None | None", owner=func))
+        self.assertEqual(annos["b"], support.EqualToForwardRef("None | undefined", owner=func))
+
 class TestStringFormat(unittest.TestCase):
     def test_closure(self):
         x = 0
@@ -545,6 +553,14 @@ class TestStringFormat(unittest.TestCase):
             {"x": "x | <class 'int'>", "y": "<class 'int'>"},
         )
 
+
+    def test_none_ops(self):
+        def func(a: None | None, b: None | undefined):
+            pass
+
+        annos = get_annotations(func, format=Format.STRING)
+        self.assertEqual(annos["a"], "None | None")
+        self.assertEqual(annos["b"], "None | undefined")
 
 class TestGetAnnotations(unittest.TestCase):
     def test_builtin_type(self):
