@@ -24,6 +24,7 @@ class Format(enum.IntEnum):
     VALUE_WITH_FAKE_GLOBALS = 2
     FORWARDREF = 3
     STRING = 4
+    TYPE = 5
 
 
 _sentinel = object()
@@ -113,6 +114,13 @@ class ForwardRef:
 
         If the forward reference cannot be evaluated, raise an exception.
         """
+        if format == Format.TYPE:
+            result = self.evaluate(
+                globals=globals, locals=locals, type_params=type_params, owner=owner,
+                format=Format.FORWARDREF
+            )
+            return _structuralize(result)
+
         match format:
             case Format.STRING:
                 return self.__resolved_str__
@@ -720,6 +728,12 @@ def call_annotate_function(annotate, format, *, owner=None, _is_evaluate=False):
     on the generated ForwardRef objects.
 
     """
+    if format == Format.TYPE:
+        result = call_annotate_function(annotate, Format.FORWARDREF, owner=owner, _is_evaluate=_is_evaluate)
+        if _is_evaluate:
+            return _structuralize(result)
+        return {k: _structuralize(v) for k, v in result.items()}
+
     if format == Format.VALUE_WITH_FAKE_GLOBALS:
         raise ValueError("The VALUE_WITH_FAKE_GLOBALS format is for internal use only")
     try:
@@ -966,6 +980,10 @@ def get_annotations(
     if eval_str and format != Format.VALUE:
         raise ValueError("eval_str=True is only supported with format=Format.VALUE")
 
+    if format == Format.TYPE:
+        annos = get_annotations(obj, globals=globals, locals=locals, eval_str=False, format=Format.FORWARDREF)
+        return {k: _structuralize(v) for k, v in annos.items()}
+
     match format:
         case Format.VALUE:
             # For VALUE, we first look at __annotations__
@@ -1180,3 +1198,162 @@ class _ExtraNameFixer(ast.NodeTransformer):
         if (new_name := self.extra_names.get(node.id, _sentinel)) is not _sentinel:
             node = ast.Name(id=type_repr(new_name))
         return node
+
+
+def _is_subscriptable_type(v):
+    """Check if an object is a valid subscriptable type."""
+    if isinstance(v, type) and hasattr(v, "__class_getitem__"):
+        return True
+    import typing
+    if isinstance(v, typing._SpecialForm):
+        return True
+    return False
+
+
+
+def _call_binop(l, r, op_func, obj):
+    """Safely apply a binary operator or fallback to returning the original object."""
+    if isinstance(l, ForwardRef) and isinstance(r, ForwardRef):
+        return obj
+
+    try:
+        return op_func(l, r)
+    except Exception:
+        pass
+
+    return obj
+
+def _structuralize(obj, is_type=True):
+    """Recursively resolve ForwardRef trees into structural type objects."""
+    import ast
+    import types
+    if obj is None:
+        return types.NoneType if is_type else None
+    if isinstance(obj, tuple):
+        return tuple(
+            _structuralize(e, is_type=is_type)
+            for e in obj
+        )
+    if isinstance(obj, ForwardRef):
+        node = obj.__ast_node__
+        if node is None:
+            # Fallback for ForwardRef objects created without __ast_node__
+            try:
+                node = ast.parse(obj.__forward_arg__, mode="eval").body
+            except SyntaxError:
+                return obj
+
+        if isinstance(node, str):
+            # Evaluate it out since it is a literal string '...'
+            return obj.evaluate()
+
+        if not is_type:
+            return obj
+
+        if isinstance(node, ast.BinOp):
+            import operator
+            if isinstance(node.op, ast.BitOr):
+                l = _get_structural_child(obj, node.left)
+                r = _get_structural_child(obj, node.right)
+                return _call_binop(l, r, operator.or_, obj)
+            if isinstance(node.op, ast.MatMult):
+                l = _get_structural_child(obj, node.left)
+                r = _get_structural_child(obj, node.right, is_type=False)
+                return _call_binop(l, r, operator.matmul, obj)
+        elif isinstance(node, ast.Subscript):
+            v = _get_structural_child(obj, node.value)
+            if isinstance(v, ForwardRef):
+                return obj
+
+            if v is types.AnnotatedType:
+                if not isinstance(node.slice, ast.Tuple) or len(node.slice.elts) < 2:
+                    return obj
+                origin = _get_structural_child(obj, node.slice.elts[0])
+                metadata = tuple(
+                    _get_structural_child(obj, elt, is_type=False)
+                    for elt in node.slice.elts[1:]
+                )
+                return types.AnnotatedType[(origin, *metadata)]
+            import typing
+            if v is typing.Literal:
+                value = _get_structural_child(obj, node.slice, is_type=False)
+                return typing.Literal[value]
+
+            if not _is_subscriptable_type(v):
+                return obj
+
+            arg = _get_structural_child(obj, node.slice)
+            try:
+                return v[arg]
+            except Exception:
+                return obj
+
+        # Fallback for leaf nodes (like ast.Name) or arbitrary expressions
+        try:
+            res = obj.evaluate(format=Format.FORWARDREF)
+        except NameError:
+            return obj
+
+        if isinstance(res, ForwardRef) and res.__forward_arg__ == obj.__forward_arg__:
+            return res
+        if res is not obj:
+            return _structuralize(res, is_type=is_type)
+        return res
+
+    # Handle established types containing ForwardRefs
+    if isinstance(obj, types.AnnotatedType):
+        return types.AnnotatedType[
+            _structuralize(obj.__origin__),
+            *(
+                _structuralize(arg, False)
+                for arg in obj.__metadata__
+            )
+        ]
+
+    if isinstance(obj, (types.GenericAlias, types.UnionType)):
+        origin = obj.__origin__
+        return origin[
+            tuple(
+                _structuralize(arg)
+                for arg in obj.__args__
+            )
+        ]
+
+    return obj
+
+
+def _get_structural_child(obj, node, is_type=True):
+    """Retrieve an object for a sub-node of a ForwardRef's AST.
+
+    This function is strictly intended to evaluate the inner operands of structural
+    type expressions (such as the elements of a Union, the arguments to a GenericAlias,
+    or the metadata in an Annotated type). It resolves these isolated AST nodes
+    (like ast.Name or ast.Constant) into runtime objects (like classes or values)
+    so they can be recomposed into structural type objects.
+    """
+    import ast
+    if isinstance(node, ast.Tuple):
+        return tuple(
+            _get_structural_child(obj, elt, is_type=is_type)
+            for elt in node.elts
+        )
+    if isinstance(node, ast.Constant):
+        return _structuralize(node.value, is_type=is_type)
+
+    if isinstance(node, ast.Name):
+        extra_names = obj.__extra_names__
+        if extra_names and node.id in extra_names:
+            return _structuralize(extra_names[node.id], is_type=is_type)
+
+    new_fwd = ForwardRef(
+        "",  # Dummy string, we clear it below to lazily evaluate the AST
+        owner=obj.__owner__,
+        is_class=obj.__forward_is_class__,
+        module=obj.__forward_module__,
+    )
+    new_fwd.__arg__ = None
+    new_fwd.__ast_node__ = node
+    new_fwd.__globals__ = obj.__globals__
+    new_fwd.__cell__ = obj.__cell__
+    new_fwd.__extra_names__ = obj.__extra_names__
+    return _structuralize(new_fwd, is_type=is_type)
